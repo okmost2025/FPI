@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Buscador OSINT (enlaces) - Colombia</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background:#0b1220; color:#e9eefc; }
+    .card { background:#121a2b; padding:16px; border-radius:12px; margin-bottom:16px; }
+    input, textarea, button, select { padding:10px; border-radius:10px; border:1px solid #2a3655; background:#0f172a; color:#e9eefc; }
+    button { cursor:pointer; border:none; background:#2563eb; }
+    button:hover { background:#1d4ed8; }
+    table { width: 100%; border-collapse: collapse; background:#0f172a; }
+    th, td { border-bottom:1px solid #23304a; padding:10px; text-align:left; }
+    th { color:#bcd0ff; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; }
+    .col { flex: 1; min-width: 260px; }
+    .muted { opacity: .85; font-size: 13px; }
+    .good { color:#7CFFB2; }
+  </style>
+</head>
+<body>
+  <h1>Buscador OSINT (fuentes permitidas)</h1>
+  <div class="muted">
+    Esta herramienta <b>NO</b> “jala” información de páginas externas.
+    Solo busca dentro de una <b>lista de fuentes</b> que tú configuras y arma enlaces organizados. Exporta a CSV.
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="col">
+        <label>Consulta (texto)</label><br/>
+        <input id="q" placeholder="Ej: cédula, nombre, empresa, municipio (según fuentes públicas)"/>
+      </div>
+      <div class="col">
+        <label>Tipo de fuente</label><br/>
+        <select id="type">
+          <option value="all">Todas</option>
+          <option value="general">General</option>
+          <option value="news">Noticias</option>
+          <option value="registry">Registros</option>
+        </select>
+      </div>
+    </div>
+    <br/>
+    <button id="searchBtn">Buscar (en fuentes permitidas)</button>
+    <p class="muted">
+      Nota: Debes configurar las fuentes en <b>sources.js</b> (por ejemplo, URLs de portales oficiales o APIs con permiso).
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="col">
+        <h2>Resultados</h2>
+        <div id="meta" class="muted"></div>
+      </div>
+      <div class="col" style="flex:0; min-width: 220px;">
+        <button id="exportBtn" style="width:100%">Exportar CSV</button>
+      </div>
+    </div>
+    <br/>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Fuente</th>
+          <th>Tipo</th>
+          <th>URL</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <script src="sources.js"></script>
+  <script>
+    let lastResults = [];
+
+    const $ = (id) => document.getElementById(id);
+
+    function escapeCsv(value) {
+      const s = String(value ?? "");
+      // RFC 4180
+      if (/[",\n]/.test(s)) return `"${s.replaceAll('"','""')}"`;
+      return s;
+    }
+
+    function buildUrl(template, q) {
+      // template puede ser: "https://ejemplo.com/buscar?q={q}"
+      return template.replaceAll("{q}", encodeURIComponent(q));
+    }
+
+    function matchesSource(source, query, selectedType) {
+      if (selectedType !== "all" && source.type !== selectedType) return false;
+      const haystack = (source.name + " " + (source.tags || []).join(" ")).toLowerCase();
+      return haystack.includes(query.trim().toLowerCase()) || query.trim().length === 0;
+    }
+
+    function render(results) {
+      const tbody = $("tbody");
+      tbody.innerHTML = "";
+
+      if (!results.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="muted">No hay coincidencias con tu consulta. Prueba otra palabra.</td></tr>`;
+        return;
+      }
+
+      lastResults = results;
+
+      results.forEach((r, idx) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>${r.name}</td>
+          <td>${r.type}</td>
+          <td>
+            <a class="good" href="${r.url}" target="_blank" rel="noopener noreferrer">Abrir</a>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function search() {
+      const q = $("q").value || "";
+      const selectedType = $("type").value;
+
+      // Filtrado simple dentro de la lista de fuentes configuradas.
+      // (No consulta internet; solo arma enlaces según templates)
+      const filtered = SOURCES.filter(s => matchesSource(s, q, selectedType))
+        .map(s => ({
+          name: s.name,
+          type: s.type,
+          url: buildUrl(s.urlTemplate, q),
+          tags: s.tags || []
+        }));
+
+      // Si quieres que siempre muestren todas sin filtrar por query, cambia la lógica en matchesSource.
+      $("meta").textContent = `Mostrando ${filtered.length} fuentes (enlaces).`;
+      render(filtered);
+    }
+
+    function exportCSV() {
+      if (!lastResults.length) {
+        alert("No hay resultados para exportar.");
+        return;
+      }
+
+      const header = ["name","type","url"];
+      const rows = lastResults.map(r => [
+        r.name, r.type, r.url
+      ]);
+
+      const csv = [
+        header.map(escapeCsv).join(","),
+        ...rows.map(row => row.map(escapeCsv).join(","))
+      ].join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "resultados_fuentes.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    $("searchBtn").addEventListener("click", search);
+    $("exportBtn").addEventListener("click", exportCSV);
+    render([]);
+  </script>
+</body>
+</html>
